@@ -24,6 +24,48 @@ find_package(std_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(urdf REQUIRED)
 
+## BEGIN Custom install of float_robot_state_publisher 
+
+add_library(
+  float_${PROJECT_NAME}_node SHARED
+  src/float_robot_state_publisher.cpp)
+target_include_directories(float_${PROJECT_NAME}_node PUBLIC
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>")
+target_link_libraries(float_${PROJECT_NAME}_node PUBLIC
+  ${builtin_interfaces_TARGETS}
+  orocos-kdl
+  ${rcl_interfaces_TARGETS}
+  rclcpp::rclcpp
+  ${sensor_msgs_TARGETS}
+  ${std_msgs_TARGETS}
+  tf2_ros::tf2_ros
+  urdf::urdf
+)
+target_link_libraries(float_${PROJECT_NAME}_node PRIVATE
+  ${geometry_msgs_TARGETS}
+  kdl_parser::kdl_parser
+  rclcpp_components::component
+)
+ament_export_targets(export_float_${PROJECT_NAME}_node)
+
+rclcpp_components_register_node(float_${PROJECT_NAME}_node
+  PLUGIN "robot_state_publisher::RobotStatePublisher"
+  EXECUTABLE float_robot_state_publisher)
+
+install(
+  TARGETS
+  float_${PROJECT_NAME}_node
+  EXPORT export_float_${PROJECT_NAME}_node
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+
+## END Custom install of float_robot_state_publisher 
+
+
+## Original install targets from source information
 add_library(
   ${PROJECT_NAME}_node SHARED
   src/robot_state_publisher.cpp)
