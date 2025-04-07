@@ -77,6 +77,15 @@ geometry_msgs::msg::TransformStamped kdlToTransform(const KDL::Frame & k)
 RobotStatePublisher::RobotStatePublisher(const rclcpp::NodeOptions & options)
 : rclcpp::Node("robot_state_publisher", options)
 {
+  RCLCPP_INFO(get_logger(), "Starting robot_state_publisher");
+
+  RCLCPP_INFO(get_logger(), "Instantiating the custom subscriber for fixed transform updating");
+  // setup the fixed transform subscriber
+  fixed_transform_updator_sub_ = this->create_subscription<geometry_msgs::msg::TransformStamped>(
+    "robot_state_publisher_update_fixed_transforms",
+    rclcpp::SensorDataQoS(),
+    std::bind(&RobotStatePublisher::callbackTransformUpdate, this, std::placeholders::_1));
+
   // get the XML
   std::string urdf_xml = this->declare_parameter("robot_description", std::string(""));
   if (urdf_xml.empty()) {
@@ -112,11 +121,6 @@ RobotStatePublisher::RobotStatePublisher(const rclcpp::NodeOptions & options)
       RCLCPP_FATAL(get_logger(), "%s", err.what());
       throw;
     }
-    // setup the fixed transform subscriber
-    fixed_transform_updator_sub_ = this->create_subscription<geometry_msgs::msg::TransformStamped>(
-      "robot_state_publisher_update_fixed_transforms",
-      rclcpp::SensorDataQoS(),
-      std::bind(&RobotStatePublisher::callbackTransformUpdate, this, std::placeholders::_1));
   }
 
   // set publish frequency
@@ -411,6 +415,8 @@ rcl_interfaces::msg::SetParametersResult RobotStatePublisher::parameterUpdate(
 void RobotStatePublisher::callbackTransformUpdate(
   const geometry_msgs::msg::TransformStamped::SharedPtr transform)
 {
+
+  
   // Check if the transform is valid
   if (transform->header.frame_id.empty() || transform->child_frame_id.empty()) {
     RCLCPP_WARN(get_logger(), "Received invalid transform update");
