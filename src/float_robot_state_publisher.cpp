@@ -36,9 +36,11 @@
 #include <map>
 #include <memory>
 #include <stdexcept>
-#include <string>
 #include <utility>
 #include <vector>
+#include <regex>
+#include <string>
+#include <iostream>
 
 #include "builtin_interfaces/msg/time.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
@@ -454,79 +456,69 @@ namespace robot_state_publisher
     return result;
   }
 
-  // void callbackTransformUpdate(const geometry_msgs::msg::TransformStamped::SharedPtr transform)
-  // callback for the transform update
   void RobotStatePublisher::callbackTransformUpdate(
       const geometry_msgs::msg::TransformStamped::SharedPtr transform)
   {
-
-    // Check if the transform is valid
     if (transform->header.frame_id.empty() || transform->child_frame_id.empty())
     {
       RCLCPP_WARN(get_logger(), "Received invalid transform update");
       return;
     }
 
-    // Calculate the world position from the header frame ID to the child frame ID
     std::string child_frame_id = transform->child_frame_id;
-    std::string parent_frame_id = transform->header.frame_id;
 
     auto it = segments_fixed_.find(child_frame_id);
     if (it == segments_fixed_.end())
     {
       RCLCPP_WARN(get_logger(), "Fixed transform for child frame '%s' not found", child_frame_id.c_str());
-
-      // run a for loop to print all the available child frames and their associated parameters
-      RCLCPP_WARN(get_logger(), "Available child frames:");
-      for (const auto &pair : segments_fixed_)
-      {
-        const std::string &child_frame = pair.first;
-        const SegmentPair &segment_pair = pair.second;
-
-        // Extract parent frame and transform details
-        const std::string &parent_frame = segment_pair.root;
-        const KDL::Frame &transform = segment_pair.segment.pose(0);
-
-        // Extract translation and rotation
-        KDL::Vector translation = transform.p;
-        double x, y, z, w;
-        transform.M.GetQuaternion(x, y, z, w);
-
-        // Print the details
-        RCLCPP_WARN(
-            get_logger(),
-            " - Child Frame: %s, Parent Frame: %s, Translation: [x: %f, y: %f, z: %f], Rotation: [x: %f, y: %f, z: %f, w: %f]",
-            child_frame.c_str(),
-            parent_frame.c_str(),
-            translation.x(), translation.y(), translation.z(),
-            x, y, z, w);
-      }
-
       return;
     }
 
-    // Convert geometry_msgs::msg::TransformStamped to KDL::Frame
-    const auto &t = transform->transform;
-    KDL::Vector translation(t.translation.x, t.translation.y, t.translation.z);
+    // Extract the current URDF
+    std::string urdf_xml = get_parameter("robot_description").get_value<std::string>();
+    if (urdf_xml.empty())
+    {
+      RCLCPP_ERROR(get_logger(), "Failed to retrieve robot_description parameter");
+      return;
+    }
+
+    // Update the joint's origin in the URDF
+    double roll, pitch, yaw;
     KDL::Rotation rotation = KDL::Rotation::Quaternion(
-        t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w);
-    KDL::Frame parent_to_world(rotation, translation);
+        transform->transform.rotation.x,
+        transform->transform.rotation.y,
+        transform->transform.rotation.z,
+        transform->transform.rotation.w);
+    rotation.GetRPY(roll, pitch, yaw);
 
-    // Update the fixed transform in the robot state
-    SegmentPair &fixed_segment = it->second;
-    KDL::Frame child_to_parent = fixed_segment.segment.pose(0);
-    KDL::Frame child_to_world = parent_to_world * child_to_parent;
+    std::ostringstream new_origin;
+    new_origin << "<origin rpy=\"" << roll << " " << pitch << " " << yaw
+               << "\" xyz=\"" << transform->transform.translation.x << " "
+               << transform->transform.translation.y << " "
+               << transform->transform.translation.z << "\"/>";
 
-    // Update the segment with the new transform
-    fixed_segment.segment = KDL::Segment(
-        fixed_segment.segment.getName(),
-        fixed_segment.segment.getJoint(),
-        child_to_world);
+    std::regex joint_regex("<joint name=\"" + child_frame_id + R"([^>]*>\s*<origin rpy=\"[^\"]*\" xyz=\"[^\"]*\"[^>]*>)");
 
-    RCLCPP_INFO(get_logger(), "Updated fixed transform for child frame '%s'", child_frame_id.c_str());
+    // Construct the updated joint string with type="fixed"
+    std::ostringstream updated_joint;
+    updated_joint << "<joint name=\"" << child_frame_id << "\" type=\"fixed\">"
+                  << new_origin.str();
 
-    // Republish all fixed transforms
-    publishFixedTransforms();
+    // Perform the replacement
+    std::string updated_urdf = std::regex_replace(urdf_xml, joint_regex, updated_joint.str());
+
+    if (updated_urdf == urdf_xml)
+    {
+      RCLCPP_WARN(get_logger(), "No changes made to URDF for joint '%s'", child_frame_id.c_str());
+      return;
+    }
+
+    // Update the robot_description parameter
+    set_parameter(rclcpp::Parameter("robot_description", updated_urdf));
+
+    // Reinitialize the robot state
+    setupURDF(updated_urdf);
+    RCLCPP_INFO(get_logger(), "Updated URDF for joint '%s' with type 'fixed'", child_frame_id.c_str());
   }
 
   void RobotStatePublisher::onParameterEvent(
